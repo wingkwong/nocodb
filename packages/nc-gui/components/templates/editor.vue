@@ -14,11 +14,12 @@
 
       <v-tooltip bottom>
         <template #activator="{on}">
+          <input type="file" ref="file" style="display: none" accept=".xlsx, .xls" v-on:change="_change($event)">
           <v-btn
             small
             outlined
             v-on="on"
-            @click="$toast.info('Happy hacking!').goAway(3000)"
+            @click="$refs.file.click()"
           >
             <v-icon small class="mr-1">
               mdi-file-excel-outline
@@ -549,11 +550,14 @@
 import { uiTypes, getUIDTIcon, UITypes } from '~/components/project/spreadsheet/helpers/uiTypes'
 import GradientGenerator from '~/components/templates/gradientGenerator'
 import Help from '~/components/templates/help'
+import XLSX from 'xlsx';
+
 
 const LinkToAnotherRecord = 'LinkToAnotherRecord'
 const Lookup = 'Lookup'
 const Rollup = 'Rollup'
 const defaultColProp = {}
+
 
 export default {
   name: 'TemplateEditor',
@@ -1063,6 +1067,7 @@ export default {
 
     async saveTemplate() {
       this.loading = true
+      
       try {
         if (this.id || this.localId) {
           await this.$axios.put(`${process.env.NC_API_URL}/api/v1/nc/templates/${this.id || this.localId}`, this.projectTemplate, {
@@ -1132,6 +1137,104 @@ export default {
           }
         }
       }
+    },
+    _change(file) {
+      const files = file.target.files
+			if(files && files[0]) this._file(files[0]);
+    },
+    _file(file) {
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const ab = e.target.result;
+				const wb = XLSX.read(new Uint8Array(ab), { type:'array' });
+        // [Project Configuration] [Table A] [Table B] ...
+        if(wb.SheetNames.length < 2) {
+          return this.$toast.error("Should have at least two sheets").goAway(3000)
+        }
+
+        var res = {}
+
+        // iterate each sheet
+        // each sheet repensents each table
+        for(var i = 0; i < wb.SheetNames.length; i++) {
+          const sheet = wb.SheetNames[i]
+          const ws = wb.Sheets[sheet];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          if(i == 0) {
+            // Sheet 1 - Project Configuration
+            // Example:
+            // ['Project Name', 'Project Category', 'Project Tags', 'Project Description']
+            // ['Sample Project', 'eCommence', 'eComm', 'Lorem ipsum dolor sit amet, consectetur adipiscing… qui officia deserunt mollit anim id est laborum.']
+            const pcHeader = ['Project Name', 'Project Category', 'Project Tags', 'Project Description']
+            const header = rows[0]
+            // the first sheet must be project configuration 
+            if(!(Array.isArray(header) && pcHeader.length === header.length && pcHeader.every((val, index) => val === header[index]))) {
+              return this.$toast.error(`Project Configuration Header does not match ${pcHeader}`).goAway(3000)
+            }
+            
+            const projectName = rows[1][0]
+            const projectCategory = rows[1][1]
+            const projectTag = rows[1][2]
+            const projectDescription = rows[1][3]
+
+            if(!projectName) return this.$toast.error(`Project Name cannot be empty`).goAway(3000)
+            if(!projectCategory) return this.$toast.error(`Project Category cannot be empty`).goAway(3000)
+
+            res = {
+              ...res,
+              title: file.name.replace(/\.[^/.]+$/, ""), // TODO: camlize 
+              name : projectName,
+              category: projectCategory,
+              tags: projectTag,
+              description: projectDescription,
+              image_url: "linear-gradient(119deg, #48cdeb, #2761b6)", // TODO:
+              tables: []
+            }
+            console.log(res)
+          } else {
+            // Sheet 2 - TableA
+            // 0: (2) ['cn', 'uidt']
+            // 1: (2) ['Column1', 'Number']
+            // 2: (2) ['Column2', 'Number']
+            // 3: (2) ['Column3', 'Number']
+            // 4: (2) ['Column4', 'Number']
+            // 5: (2) ['Column5', 'Number']
+            // 6: (2) ['Column6', 'Number']
+            // 7: (2) ['Column7', 'Number']
+            const tbHeader = ['cn', 'uidt']
+            const header = rows[0]
+            
+            if(!(Array.isArray(header) && tbHeader.length === header.length && tbHeader.every((val, index) => val === header[index]))) {
+              return this.$toast.error(`Table Header does not match ${tbHeader}`).goAway(3000)
+            }
+            
+            var columns = []
+            for(var i = 1; i < rows.length; i++) {
+              const columnName = rows[i][0]
+              const columnType = rows[i][1]
+              if(!columnName) return this.$toast.error(`Column Name cannot be empty`).goAway(3000)
+              if(!columnType) return this.$toast.error(`Column Type cannot be empty`).goAway(3000)
+              // TODO: validate columnType
+              const column = {
+                cn: rows[i][0],
+                uidt: rows[i][1]
+              }
+              columns.push(column)
+            }
+
+            var tableObj = {
+              tn: sheet, // TODO: camlize
+              columns,
+              hasMany: [], // TODO
+              manyToMany: [], // TODO
+              v: [] // TODO:
+            }
+            res["tables"].push(tableObj)
+          }
+          console.log(res)
+        }
+      };
+      reader.readAsArrayBuffer(file);
     }
   }
 }
